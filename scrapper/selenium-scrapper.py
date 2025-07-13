@@ -3,6 +3,7 @@ import requests
 import logging
 import datetime
 import pytz
+import random
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -20,6 +21,8 @@ CONFIG = {
     "TWITTER_PASSWORD": "Shinkasen123.",
     "TARGET_PROFILE_URL": "https://x.com/wijay820",
     "CHECK_INTERVAL_SECONDS": 60, # Direkomendasikan 
+    "MIN_WAIT_SECONDS": 300,
+    "MAX_WAIT_SECONDS": 600,
     "WHATSAPP_BOT_URL": "http://localhost:3000/kirim-pesan",
     "GROUP_ID": "120363417848982331@g.us",
     "SELENIUM_TIMEOUT": 20
@@ -120,6 +123,7 @@ class TwitterScraper:
                 jakarta_tz = pytz.timezone('Asia/Jakarta')
                 now_jakarta = datetime.datetime.now(jakarta_tz)
                 
+                
                 # Cek apakah jam saat ini antara 00:00 (inklusif) dan 06:00 (eksklusif)
                 if 0 <= now_jakarta.hour < 6:
                     offline_sleep_minutes = 30
@@ -130,8 +134,6 @@ class TwitterScraper:
                     time.sleep(offline_sleep_minutes * 60)
                     continue  # Kembali ke awal loop untuk cek waktu lagi
                 
-                # Jika bukan jam offline, jalankan scraper
-                self.scrape_latest_tweet()
                 
                 logging.info("Mencari tweet terbaru (di posisi kedua)...")
                 tweet_info = self.get_second_tweet_info()
@@ -143,8 +145,13 @@ class TwitterScraper:
                 else:
                     logging.info("Tidak ada tweet baru.")
                 
-                logging.info(f"Menunggu selama {self.config['CHECK_INTERVAL_SECONDS']} detik...")
-                time.sleep(self.config['CHECK_INTERVAL_SECONDS'])
+                min_wait = self.config['MIN_WAIT_SECONDS']
+                max_wait = self.config['MAX_WAIT_SECONDS']
+                
+                random_wait = random.randint(min_wait, max_wait)
+                
+                logging.info(f"Menunggu selama {random_wait} detik...")
+                time.sleep(random_wait)
 
     def close(self):
         """Menutup WebDriver."""
