@@ -10,7 +10,11 @@ app.use(express.json());
 const PORT = 3000;
 
 const client = new Client({
-    authStrategy: new LocalAuth()
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        headless: true, // Pastikan berjalan di mode headless
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }
 });
 
 client.on('qr', qr => {
