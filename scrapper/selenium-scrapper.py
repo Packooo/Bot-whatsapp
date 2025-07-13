@@ -1,6 +1,8 @@
 import time
 import requests
 import logging
+import datetime  # <-- TAMBAHKAN INI
+import pytz      # <-- TAMBAHKAN INI
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -151,9 +153,26 @@ class TwitterScraper:
         """Menjalankan loop utama scraper."""
         if self.login():
             while True:
+                # Tentukan zona waktu Jakarta
+                jakarta_tz = pytz.timezone('Asia/Jakarta')
+                now_jakarta = datetime.datetime.now(jakarta_tz)
+                
+                # Cek apakah jam saat ini antara 00:00 (inklusif) dan 06:00 (eksklusif)
+                if 0 <= now_jakarta.hour < 6:
+                    offline_sleep_minutes = 30
+                    logging.info(
+                        f"Jam {now_jakarta.strftime('%H:%M:%S')} WIB. "
+                        f"Bot dalam mode offline. Akan dicek lagi dalam {offline_sleep_minutes} menit."
+                    )
+                    time.sleep(offline_sleep_minutes * 60)
+                    continue  # Kembali ke awal loop untuk cek waktu lagi
+                
+                # Jika bukan jam offline, jalankan scraper
                 self.scrape_latest_tweet()
+                
                 logging.info(f"Menunggu selama {self.config['CHECK_INTERVAL_SECONDS']} detik...")
                 time.sleep(self.config['CHECK_INTERVAL_SECONDS'])
+
 
     def close(self):
         """Menutup WebDriver."""
