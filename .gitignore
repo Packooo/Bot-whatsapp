@@ -1,0 +1,11 @@
+# Abaikan folder dependensi
+/nodejs/node_modules
+
+# Abaikan file log
+*.log
+
+# Abaikan file environment (jika ada)
+.env
+
+# Abaikan folder sesi whatsapp-web.js
+.wwebjs_auth/
