@@ -21,8 +21,8 @@ CONFIG = {
     "TWITTER_PASSWORD": "Shinkasen123.",
     "TARGET_PROFILE_URL": "https://x.com/wijay820",
     "CHECK_INTERVAL_SECONDS": 60, # Direkomendasikan 
-    "MIN_WAIT_SECONDS": 30,
-    "MAX_WAIT_SECONDS": 61,
+    "MIN_WAIT_SECONDS": 300,
+    "MAX_WAIT_SECONDS": 600,
     "WHATSAPP_BOT_URL": "http://localhost:3000/kirim-pesan",
     "GROUP_ID": "120363417848982331@g.us",
     "SELENIUM_TIMEOUT": 20
