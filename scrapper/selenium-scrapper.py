@@ -113,21 +113,47 @@ class TwitterScraper:
             return False
 
     def get_latest_tweets(self):
-        """Ambil 5 tweet ID terbaru dari profil."""
+        """Ambil tweet ID terbaru dari profil dengan scrolling yang efektif."""
         try:
             logging.info(f"Mengunjungi profil: {self.config['TARGET_PROFILE_URL']}")
             self.driver.get(self.config['TARGET_PROFILE_URL'])
-
+            time.sleep(3)
+            
             tweet_selector = 'article[data-testid="tweet"]'
-            all_tweets = WebDriverWait(self.driver, self.config["SELENIUM_TIMEOUT"]).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, tweet_selector))
-            )
             
-            logging.info(f"Ditemukan {len(all_tweets)} tweet di halaman profil")
+            # Tunggu tweet muncul
+            try:
+                WebDriverWait(self.driver, self.config["SELENIUM_TIMEOUT"]).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, tweet_selector))
+                )
+            except TimeoutException:
+                logging.warning("Timeout menunggu tweet, coba scroll untuk memicu loading...")
+                self.driver.execute_script("window.scrollTo(0, 800);")
+                time.sleep(2)
+                self.driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(1)
             
-            # Ambil maksimal 5 tweet terbaru
-            tweet_batch = all_tweets[:5]
+            # Scroll bertahap untuk memuat lebih banyak tweet
+            logging.info("Scroll untuk memuat tweet...")
+            best_tweets = []
+            
+            # Scroll ke beberapa posisi dan ambil tweet terbanyak
+            scroll_positions = [0, 600, 1200, 1800, 2400]
+            for pos in scroll_positions:
+                self.driver.execute_script(f"window.scrollTo(0, {pos});")
+                time.sleep(1.5)
+                
+                current_tweets = self.driver.find_elements(By.CSS_SELECTOR, tweet_selector)
+                if len(current_tweets) > len(best_tweets):
+                    best_tweets = current_tweets
+                    logging.info(f"Ditemukan {len(current_tweets)} tweet")
+                
+                if len(current_tweets) >= 5:
+                    break
+            
+            # Ekstrak ID dari tweet terbaik yang ditemukan
             current_tweet_ids = []
+            tweet_batch = best_tweets[:5] if best_tweets else []
             
             for i, tweet_element in enumerate(tweet_batch):
                 try:
@@ -139,44 +165,46 @@ class TwitterScraper:
                     logging.error(f"Error mengambil tweet ke-{i+1}: {e}")
                     continue
             
-            logging.info(f"Berhasil mengambil {len(current_tweet_ids)} tweet ID")
+            logging.info(f"✅ Berhasil mengambil {len(current_tweet_ids)} tweet ID")
             return current_tweet_ids
-
-        except TimeoutException:
-            logging.error("Timeout saat menunggu tweet dimuat.")
-            return []
+            
         except Exception as e:
-            logging.error(f"Gagal mengambil tweet: {e}")
+            logging.error(f"Error mengambil tweet: {e}")
             return []
 
     def _extract_tweet_id(self, tweet_element):
         """Ekstrak ID tweet dari elemen tweet."""
+        # Metode utama: cari dari link timestamp
         try:
-            # Metode 1: Cari link tweet
             time_element = tweet_element.find_element(By.CSS_SELECTOR, 'time')
             parent_link = time_element.find_element(By.XPATH, '..')
             href = parent_link.get_attribute('href')
             
             if href and '/status/' in href:
-                tweet_id = href.split('/status/')[-1].split('?')[0]
-                return tweet_id
-                
-        except NoSuchElementException:
-            pass
-        
-        try:
-            # Metode 2: Cari dari data attributes
-            tweet_id = tweet_element.get_attribute('data-tweet-id')
-            if tweet_id:
-                return tweet_id
+                tweet_id = href.split('/status/')[-1].split('?')[0].split('/')[0]
+                if tweet_id.isdigit():
+                    return tweet_id
         except:
             pass
         
+        # Metode alternatif: cari dari semua link dalam tweet
         try:
-            # Metode 3: Cari dari aria-labelledby atau id
-            aria_labelledby = tweet_element.get_attribute('aria-labelledby')
-            if aria_labelledby and 'id__' in aria_labelledby:
-                return aria_labelledby.split('id__')[-1]
+            links = tweet_element.find_elements(By.TAG_NAME, 'a')
+            for link in links:
+                href = link.get_attribute('href')
+                if href and '/status/' in href:
+                    tweet_id = href.split('/status/')[-1].split('?')[0].split('/')[0]
+                    if tweet_id.isdigit():
+                        return tweet_id
+        except:
+            pass
+        
+        # Fallback: generate ID dari konten tweet
+        try:
+            tweet_text = tweet_element.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]').text
+            if tweet_text:
+                hash_id = str(abs(hash(tweet_text[:50])))[:10]
+                return hash_id
         except:
             pass
         
@@ -283,30 +311,27 @@ class TwitterScraper:
 
     def check_and_process_new_tweets(self, current_tweet_ids):
         """Cek tweet baru dan proses jika ada."""
-        new_tweet_ids = []
+        logging.info(f"Status: {len(current_tweet_ids)} tweet ditemukan, {len(self.processed_tweet_ids)} sudah diproses")
         
         # Cari tweet yang belum diproses
-        for tweet_id in current_tweet_ids:
-            if tweet_id not in self.processed_tweet_ids:
-                new_tweet_ids.append(tweet_id)
+        new_tweet_ids = [tweet_id for tweet_id in current_tweet_ids if tweet_id not in self.processed_tweet_ids]
         
         if not new_tweet_ids:
             logging.info("Tidak ada tweet baru")
             return 0
         
-        logging.info(f"Ditemukan {len(new_tweet_ids)} tweet baru: {new_tweet_ids}")
+        logging.info(f"Memproses {len(new_tweet_ids)} tweet baru")
         
         # Proses setiap tweet baru
         processed_count = 0
         for tweet_id in new_tweet_ids:
             try:
-                # Ambil detail tweet
                 tweet_info = self._get_tweet_details(tweet_id)
                 if tweet_info and self._send_to_whatsapp(tweet_info):
                     self.processed_tweet_ids.add(tweet_id)
                     processed_count += 1
-                    logging.info(f"✅ Tweet {tweet_id} berhasil dikirim ke WhatsApp")
-                    time.sleep(1)  # Delay 1 detik antar tweet
+                    logging.info(f"✅ Tweet {tweet_id} dikirim ke WhatsApp")
+                    time.sleep(1)
                 else:
                     logging.error(f"❌ Gagal mengirim tweet {tweet_id}")
             except Exception as e:
@@ -314,6 +339,7 @@ class TwitterScraper:
         
         if processed_count > 0:
             self._save_processed_tweets()
+            logging.info(f"✅ {processed_count} tweet baru berhasil diproses")
         
         return processed_count
 
