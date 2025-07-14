@@ -21,8 +21,8 @@ CONFIG = {
     "TWITTER_PASSWORD": "Shinkasen123.",
     "TARGET_PROFILE_URL": "https://x.com/wijay820",
     "CHECK_INTERVAL_SECONDS": 60, # Direkomendasikan 
-    "MIN_WAIT_SECONDS": 300,
-    "MAX_WAIT_SECONDS": 600,
+    "MIN_WAIT_SECONDS": 30,
+    "MAX_WAIT_SECONDS": 61,
     "WHATSAPP_BOT_URL": "http://localhost:3000/kirim-pesan",
     "GROUP_ID": "120363417848982331@g.us",
     "SELENIUM_TIMEOUT": 20
@@ -83,7 +83,12 @@ class TwitterScraper:
 
             second_tweet_element = all_tweets[1] # Langsung ambil tweet kedua
             
-            tweet_text = second_tweet_element.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]').text
+            try:
+                tweet_text = second_tweet_element.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]').text
+            except NoSuchElementException:
+                logging.warning("Tidak dapat menemukan elemen teks pada tweet kedua.")
+                tweet_text = ""
+
             image_url = self._find_image_url(second_tweet_element)
 
             return {
@@ -91,6 +96,9 @@ class TwitterScraper:
                 "image": image_url
             }
 
+        except TimeoutException:
+            logging.error("Timeout saat menunggu tweet dimuat. Profil mungkin kosong atau halaman tidak ter-load.")
+            return None
         except Exception as e:
             logging.error(f"Gagal mengambil tweet kedua: {e}", exc_info=True)
             return None
