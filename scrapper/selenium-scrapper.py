@@ -18,8 +18,9 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 # --- Konfigurasi Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Import konfigurasi
+# Import konfigurasi dan scheduler
 from config import get_config, print_config_summary
+from scheduler import SmartScheduler
 
 class TwitterScraper:
     def __init__(self, config):
@@ -29,6 +30,16 @@ class TwitterScraper:
         self.processed_tweet_ids = set()  # Set untuk menyimpan ID tweet yang sudah diproses
         self.post_timestamps = deque()  # Queue untuk tracking timestamp posting
         self.tweet_data_file = self.config["TWEET_DATA_FILE"]
+        
+        # Initialize smart scheduler jika diaktifkan
+        if self.config.get('USE_SMART_SCHEDULER', True):
+            self.scheduler = SmartScheduler(self.config.get('TIMEZONE', 'Asia/Jakarta'))
+            logging.info("Smart Scheduler diaktifkan")
+            logging.info(self.scheduler.get_schedule_summary())
+        else:
+            self.scheduler = None
+            logging.info("Menggunakan mode legacy (tanpa smart scheduler)")
+        
         self._load_processed_tweets()
 
     def _load_processed_tweets(self):
@@ -304,45 +315,111 @@ class TwitterScraper:
         return processed_count
 
     def run(self):
-        """Loop utama scraper - sederhana dan efektif."""
-        if self.login():
-            while True:
-                try:
-                    # Cek waktu offline
-                    jakarta_tz = pytz.timezone('Asia/Jakarta')
-                    now_jakarta = datetime.datetime.now(jakarta_tz)
+        """Loop utama scraper dengan smart scheduler."""
+        if not self.login():
+            return
+            
+        while True:
+            try:
+                # Gunakan smart scheduler jika diaktifkan
+                if self.scheduler:
+                    self._run_with_smart_scheduler()
+                else:
+                    self._run_legacy_mode()
                     
-                    if self.config['OFFLINE_START_HOUR'] <= now_jakarta.hour < self.config['OFFLINE_END_HOUR']:
-                        logging.info(f"Mode offline ({now_jakarta.strftime('%H:%M')} WIB)")
-                        time.sleep(self.config['OFFLINE_CHECK_INTERVAL'] * 60)
-                        continue
+            except Exception as e:
+                logging.error(f"Error dalam main loop: {e}")
+                time.sleep(60)
+    
+    def _run_with_smart_scheduler(self):
+        """Jalankan scraper dengan smart scheduler."""
+        # Cek apakah saat ini waktu crawling
+        if not self.scheduler.is_crawling_time():
+            # Tunggu sampai window crawling berikutnya
+            self.scheduler.wait_for_next_window(self.config)
+            return
+        
+        # Dapatkan info window saat ini
+        window_info = self.scheduler.get_current_window_info()
+        if window_info:
+            logging.info(f"🟢 CRAWLING AKTIF - Window: {window_info['start_time']} - {window_info['end_time']}")
+            logging.info(f"⏳ Sisa waktu window: {window_info['remaining_minutes']} menit")
+        
+        # Loop crawling selama masih dalam window
+        while self.scheduler.should_continue_crawling():
+            try:
+                # Ambil tweet terbaru
+                current_tweet_ids = self.get_latest_tweets()
+                
+                if current_tweet_ids:
+                    # Cek dan proses tweet baru
+                    processed_count = self.check_and_process_new_tweets(current_tweet_ids)
                     
-                    # Ambil 5 tweet ID terbaru
-                    current_tweet_ids = self.get_latest_tweets()
-                    
-                    if current_tweet_ids:
-                        # Cek dan proses tweet baru
-                        processed_count = self.check_and_process_new_tweets(current_tweet_ids)
-                        
-                        if processed_count > 0:
-                            logging.info(f"✅ {processed_count} tweet baru berhasil diproses")
-                    
-                    # Random delay 60-65 detik
-                    wait_time = random.randint(60, 65)
-                    logging.info(f"Menunggu {wait_time} detik...")
-                    time.sleep(wait_time)
-                    
-                except Exception as e:
-                    logging.error(f"Error: {e}")
-                    time.sleep(60)
+                    if processed_count > 0:
+                        logging.info(f"✅ {processed_count} tweet baru berhasil diproses")
+                
+                # Gunakan interval optimal berdasarkan config
+                wait_time = self.scheduler.get_optimal_check_interval(self.config)
+                logging.info(f"⏰ Menunggu {wait_time} detik (dalam window crawling)...")
+                time.sleep(wait_time)
+                
+            except Exception as e:
+                logging.error(f"Error dalam crawling window: {e}")
+                time.sleep(30)  # Wait lebih pendek untuk error dalam window
+        
+        logging.info("🔴 Window crawling berakhir")
+    
+    def _run_legacy_mode(self):
+        """Jalankan scraper dengan mode legacy (tanpa smart scheduler)."""
+        # Cek waktu offline (mode legacy)
+        jakarta_tz = pytz.timezone('Asia/Jakarta')
+        now_jakarta = datetime.datetime.now(jakarta_tz)
+        
+        if self.config['OFFLINE_START_HOUR'] <= now_jakarta.hour < self.config['OFFLINE_END_HOUR']:
+            logging.info(f"Mode offline ({now_jakarta.strftime('%H:%M')} WIB)")
+            time.sleep(self.config['OFFLINE_CHECK_INTERVAL'] * 60)
+            return
+        
+        # Ambil 5 tweet ID terbaru
+        current_tweet_ids = self.get_latest_tweets()
+        
+        if current_tweet_ids:
+            # Cek dan proses tweet baru
+            processed_count = self.check_and_process_new_tweets(current_tweet_ids)
+            
+            if processed_count > 0:
+                logging.info(f"✅ {processed_count} tweet baru berhasil diproses")
+        
+        # Random delay berdasarkan config
+        wait_time = random.randint(self.config['MIN_WAIT_SECONDS'], self.config['MAX_WAIT_SECONDS'])
+        logging.info(f"Menunggu {wait_time} detik...")
+        time.sleep(wait_time)
 
     def get_stats(self):
         """Mendapatkan statistik scraper."""
-        return {
+        stats = {
             'processed_tweets': len(self.processed_tweet_ids),
             'max_tweets_check': self.config['MAX_TWEETS_CHECK'],
-            'check_interval': "60-65 detik (random)"
         }
+        
+        if self.scheduler:
+            stats['scheduler_mode'] = 'Smart Scheduler'
+            stats['timezone'] = self.config.get('TIMEZONE', 'Asia/Jakarta')
+            stats['crawling_windows'] = len(self.scheduler.crawling_windows)
+            
+            if self.scheduler.is_crawling_time():
+                window_info = self.scheduler.get_current_window_info()
+                stats['current_status'] = f"AKTIF - {window_info['start_time']} sampai {window_info['end_time']}"
+                stats['remaining_minutes'] = window_info['remaining_minutes']
+            else:
+                next_window = self.scheduler.get_next_crawling_window()
+                stats['current_status'] = f"MENUNGGU - Next: {next_window['start_time']}"
+                stats['wait_minutes'] = next_window['wait_minutes']
+        else:
+            stats['scheduler_mode'] = 'Legacy Mode'
+            stats['check_interval'] = f"{self.config['MIN_WAIT_SECONDS']}-{self.config['MAX_WAIT_SECONDS']} detik (random)"
+        
+        return stats
 
     def cleanup_old_tweet_ids(self, max_ids=None):
         """Membersihkan ID tweet lama untuk menghemat memori."""

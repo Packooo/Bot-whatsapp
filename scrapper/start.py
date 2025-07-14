@@ -25,8 +25,8 @@ def check_dependencies():
     return True
 
 def main():
-    print("🚀 Twitter Scraper")
-    print("=" * 30)
+    print("🚀 Twitter Scraper dengan Smart Scheduler")
+    print("=" * 50)
     
     # Quick dependency check
     if not check_dependencies():
@@ -37,6 +37,7 @@ def main():
         config = get_config()
         print_config_summary(config)
         print("=" * 50)
+        
     except Exception as e:
         print(f"❌ Config error: {e}")
         return

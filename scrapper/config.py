@@ -16,7 +16,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Timing configuration
     "CHECK_INTERVAL_SECONDS": 60,
     "MIN_WAIT_SECONDS": 60,  # 60 detik
-    "MAX_WAIT_SECONDS": 65,  # 65 detik
+    "MAX_WAIT_SECONDS": 61,  # 61 detik
     "SELENIUM_TIMEOUT": 20,
     
     # WhatsApp Bot configuration
@@ -30,7 +30,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "TWEET_DATA_FILE": "tweet_data.json",
     "LOG_LEVEL": "INFO",
     
-    # Offline hours (Jakarta time)
+    # Smart Scheduler configuration
+    "USE_SMART_SCHEDULER": True,  # Gunakan smart scheduler
+    "SCHEDULER_CHECK_INTERVAL": 60,  # Interval cek scheduler (detik)
+    "TIMEZONE": "Asia/Jakarta",  # Timezone untuk scheduler
+    
+    # Legacy offline hours (tidak digunakan jika smart scheduler aktif)
     "OFFLINE_START_HOUR": 0,  # 00:00
     "OFFLINE_END_HOUR": 6,    # 06:00
     "OFFLINE_CHECK_INTERVAL": 30,  # menit
@@ -64,8 +69,20 @@ def load_config_from_env() -> Dict[str, Any]:
     numeric_configs = [
         'CHECK_INTERVAL_SECONDS', 'MIN_WAIT_SECONDS', 'MAX_WAIT_SECONDS',
         'SELENIUM_TIMEOUT', 'MAX_TWEETS_CHECK', 'OFFLINE_START_HOUR', 'OFFLINE_END_HOUR',
-        'OFFLINE_CHECK_INTERVAL', 'MAX_STORED_TWEET_IDS'
+        'OFFLINE_CHECK_INTERVAL', 'MAX_STORED_TWEET_IDS', 'SCHEDULER_CHECK_INTERVAL'
     ]
+    
+    # Boolean configurations
+    boolean_configs = ['USE_SMART_SCHEDULER']
+    
+    for key in boolean_configs:
+        env_value = os.getenv(key)
+        if env_value:
+            config[key] = env_value.lower() in ('true', '1', 'yes', 'on')
+    
+    # String configurations
+    if os.getenv('TIMEZONE'):
+        config['TIMEZONE'] = os.getenv('TIMEZONE')
     
     for key in numeric_configs:
         env_value = os.getenv(key)
@@ -127,15 +144,22 @@ def print_config_summary(config: Dict[str, Any]) -> None:
     """
     Tampilkan ringkasan konfigurasi (tanpa password)
     """
-    print("📋 KONFIGURASI SCRAPER SEDERHANA")
-    print("=" * 40)
+    print("📋 KONFIGURASI SCRAPER DENGAN SMART SCHEDULER")
+    print("=" * 50)
     print(f"🎯 Target: {config['TARGET_PROFILE_URL']}")
     print(f"👤 Username: {config['TWITTER_USERNAME']}")
     print(f"📱 WhatsApp Group: {config['GROUP_ID']}")
     print(f"📊 Cek: {config['MAX_TWEETS_CHECK']} tweet terbaru setiap kali")
     print(f"⏰ Interval: {config['MIN_WAIT_SECONDS']}-{config['MAX_WAIT_SECONDS']} detik (random)")
-    print(f"💤 Offline: {config['OFFLINE_START_HOUR']:02d}:00 - {config['OFFLINE_END_HOUR']:02d}:00")
-    print("=" * 40)
+    
+    if config.get('USE_SMART_SCHEDULER', True):
+        print(f"🤖 Smart Scheduler: AKTIF ({config.get('TIMEZONE', 'Asia/Jakarta')})")
+        print(f"⏳ Check Interval: {config.get('SCHEDULER_CHECK_INTERVAL', 60)} detik")
+        print("📅 Crawling hanya pada waktu tertentu untuk efisiensi")
+    else:
+        print(f"💤 Mode Legacy - Offline: {config['OFFLINE_START_HOUR']:02d}:00 - {config['OFFLINE_END_HOUR']:02d}:00")
+    
+    print("=" * 50)
 
 if __name__ == "__main__":
     # Test konfigurasi
