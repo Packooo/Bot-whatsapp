@@ -31,7 +31,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "LOG_LEVEL": "INFO",
     
     # Smart Scheduler configuration
-    "USE_SMART_SCHEDULER": True,  # Gunakan smart scheduler
+    "USE_SMART_SCHEDULER": False,  # Gunakan smart scheduler
     "SCHEDULER_CHECK_INTERVAL": 60,  # Interval cek scheduler (detik)
     "TIMEZONE": "Asia/Jakarta",  # Timezone untuk scheduler
     
@@ -46,51 +46,26 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 def load_config_from_env() -> Dict[str, Any]:
     """
-    Load konfigurasi dari environment variables
-    Berguna untuk deployment atau testing
+    Load konfigurasi dengan prioritas config.py file
+    Environment variables hanya digunakan untuk credentials yang sensitif
     """
     config = DEFAULT_CONFIG.copy()
     
-    # Twitter credentials
+    # HANYA credentials yang bisa di-override oleh environment variables
+    # Ini untuk keamanan deployment
     if os.getenv('TWITTER_USERNAME'):
         config['TWITTER_USERNAME'] = os.getenv('TWITTER_USERNAME')
     if os.getenv('TWITTER_PASSWORD'):
         config['TWITTER_PASSWORD'] = os.getenv('TWITTER_PASSWORD')
     if os.getenv('TARGET_PROFILE_URL'):
         config['TARGET_PROFILE_URL'] = os.getenv('TARGET_PROFILE_URL')
-    
-    # WhatsApp configuration
     if os.getenv('WHATSAPP_BOT_URL'):
         config['WHATSAPP_BOT_URL'] = os.getenv('WHATSAPP_BOT_URL')
     if os.getenv('GROUP_ID'):
         config['GROUP_ID'] = os.getenv('GROUP_ID')
     
-    # Numeric configurations
-    numeric_configs = [
-        'CHECK_INTERVAL_SECONDS', 'MIN_WAIT_SECONDS', 'MAX_WAIT_SECONDS',
-        'SELENIUM_TIMEOUT', 'MAX_TWEETS_CHECK', 'OFFLINE_START_HOUR', 'OFFLINE_END_HOUR',
-        'OFFLINE_CHECK_INTERVAL', 'MAX_STORED_TWEET_IDS', 'SCHEDULER_CHECK_INTERVAL'
-    ]
-    
-    # Boolean configurations
-    boolean_configs = ['USE_SMART_SCHEDULER']
-    
-    for key in boolean_configs:
-        env_value = os.getenv(key)
-        if env_value:
-            config[key] = env_value.lower() in ('true', '1', 'yes', 'on')
-    
-    # String configurations
-    if os.getenv('TIMEZONE'):
-        config['TIMEZONE'] = os.getenv('TIMEZONE')
-    
-    for key in numeric_configs:
-        env_value = os.getenv(key)
-        if env_value:
-            try:
-                config[key] = int(env_value)
-            except ValueError:
-                print(f"Warning: Invalid value for {key}: {env_value}")
+    # SEMUA konfigurasi timing dan behavior SELALU menggunakan nilai dari config.py
+    # Environment variables untuk timing akan diabaikan secara otomatis
     
     return config
 
@@ -132,6 +107,7 @@ def validate_config(config: Dict[str, Any]) -> bool:
 def get_config() -> Dict[str, Any]:
     """
     Mendapatkan konfigurasi final yang sudah divalidasi
+    Prioritas: config.py file > environment variables (hanya untuk credentials)
     """
     config = load_config_from_env()
     

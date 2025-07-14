@@ -181,6 +181,7 @@ class SmartScheduler:
             check_interval = config.get('SCHEDULER_CHECK_INTERVAL', 60)
         else:
             check_interval = 60
+            
         while not self.is_crawling_time():
             next_window = self.get_next_crawling_window()
             current_time = self._get_current_time()
@@ -189,8 +190,10 @@ class SmartScheduler:
             logging.info(f"🕐 Waktu saat ini: {current_time.strftime('%H:%M:%S')} WIB")
             logging.info(f"⏳ Sisa waktu tunggu: {next_window['wait_minutes']} menit")
             
-            # Tunggu dengan interval yang ditentukan
-            time.sleep(min(check_interval, next_window['wait_seconds']))
+            # Tunggu dengan interval yang ditentukan, maksimal check_interval detik
+            wait_time = min(check_interval, next_window['wait_seconds'])
+            logging.info(f"💤 Sleeping for {wait_time} seconds...")
+            time.sleep(wait_time)
     
     def get_schedule_summary(self) -> str:
         """

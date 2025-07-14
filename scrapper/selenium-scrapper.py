@@ -32,13 +32,16 @@ class TwitterScraper:
         self.tweet_data_file = self.config["TWEET_DATA_FILE"]
         
         # Initialize smart scheduler jika diaktifkan
-        if self.config.get('USE_SMART_SCHEDULER', True):
+        use_smart_scheduler = self.config.get('USE_SMART_SCHEDULER', False)
+        if use_smart_scheduler:
             self.scheduler = SmartScheduler(self.config.get('TIMEZONE', 'Asia/Jakarta'))
             logging.info("Smart Scheduler diaktifkan")
             logging.info(self.scheduler.get_schedule_summary())
         else:
             self.scheduler = None
             logging.info("Menggunakan mode legacy (tanpa smart scheduler)")
+            logging.info(f"Legacy mode config - Offline: {self.config['OFFLINE_START_HOUR']:02d}:00 - {self.config['OFFLINE_END_HOUR']:02d}:00")
+            logging.info(f"Legacy mode config - Check interval: {self.config['MIN_WAIT_SECONDS']}-{self.config['MAX_WAIT_SECONDS']} detik")
         
         self._load_processed_tweets()
 
@@ -371,12 +374,17 @@ class TwitterScraper:
     
     def _run_legacy_mode(self):
         """Jalankan scraper dengan mode legacy (tanpa smart scheduler)."""
-        # Cek waktu offline (mode legacy)
-        jakarta_tz = pytz.timezone('Asia/Jakarta')
-        now_jakarta = datetime.datetime.now(jakarta_tz)
+        # Cek waktu offline (mode legacy) - gunakan timezone dari config
+        timezone_str = self.config.get('TIMEZONE', 'Asia/Jakarta')
+        local_tz = pytz.timezone(timezone_str)
+        now_local = datetime.datetime.now(local_tz)
         
-        if self.config['OFFLINE_START_HOUR'] <= now_jakarta.hour < self.config['OFFLINE_END_HOUR']:
-            logging.info(f"Mode offline ({now_jakarta.strftime('%H:%M')} WIB)")
+        # Log informasi waktu saat ini
+        logging.info(f"Legacy mode - Waktu saat ini: {now_local.strftime('%H:%M:%S')} ({timezone_str})")
+        
+        if self.config['OFFLINE_START_HOUR'] <= now_local.hour < self.config['OFFLINE_END_HOUR']:
+            logging.info(f"Mode offline ({now_local.strftime('%H:%M')} {timezone_str})")
+            logging.info(f"Offline dari {self.config['OFFLINE_START_HOUR']:02d}:00 sampai {self.config['OFFLINE_END_HOUR']:02d}:00")
             time.sleep(self.config['OFFLINE_CHECK_INTERVAL'] * 60)
             return
         
