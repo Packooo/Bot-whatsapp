@@ -4,6 +4,9 @@ import logging
 import datetime
 import pytz # type: ignore
 import random
+import json
+import os
+from collections import deque
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -15,24 +18,46 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 # --- Konfigurasi Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- Konfigurasi Scraper ---
-CONFIG = {
-    "TWITTER_USERNAME": "@rey_misteria",
-    "TWITTER_PASSWORD": "Shinkasen123.",
-    "TARGET_PROFILE_URL": "https://x.com/wijay820",
-    "CHECK_INTERVAL_SECONDS": 60, # Direkomendasikan 
-    "MIN_WAIT_SECONDS": 300,
-    "MAX_WAIT_SECONDS": 600,
-    "WHATSAPP_BOT_URL": "http://localhost:3000/kirim-pesan",
-    "GROUP_ID": "120363417848982331@g.us",
-    "SELENIUM_TIMEOUT": 20
-}
+# Import konfigurasi
+from config import get_config, print_config_summary
 
 class TwitterScraper:
     def __init__(self, config):
         self.config = config
         self.driver = self._setup_driver()
         self.last_tweet_text = "" # <-- Kembali menyimpan teks
+        self.processed_tweet_ids = set()  # Set untuk menyimpan ID tweet yang sudah diproses
+        self.post_timestamps = deque()  # Queue untuk tracking timestamp posting
+        self.tweet_data_file = self.config["TWEET_DATA_FILE"]
+        self._load_processed_tweets()
+
+    def _load_processed_tweets(self):
+        """Memuat data tweet yang sudah diproses dari file JSON."""
+        try:
+            if os.path.exists(self.tweet_data_file):
+                with open(self.tweet_data_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.processed_tweet_ids = set(data.get('processed_ids', []))
+                    logging.info(f"Loaded {len(self.processed_tweet_ids)} processed tweet IDs")
+            else:
+                self.processed_tweet_ids = set()
+                logging.info("No previous tweet data found, starting fresh")
+        except Exception as e:
+            logging.error(f"Error loading processed tweets: {e}")
+            self.processed_tweet_ids = set()
+
+    def _save_processed_tweets(self):
+        """Menyimpan data tweet yang sudah diproses ke file JSON."""
+        try:
+            data = {
+                'processed_ids': list(self.processed_tweet_ids),
+                'last_updated': datetime.datetime.now().isoformat()
+            }
+            with open(self.tweet_data_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logging.info(f"Saved {len(self.processed_tweet_ids)} processed tweet IDs")
+        except Exception as e:
+            logging.error(f"Error saving processed tweets: {e}")
 
     def _setup_driver(self):
         options = webdriver.ChromeOptions()
@@ -47,6 +72,14 @@ class TwitterScraper:
         except Exception as e:
             logging.error(f"Gagal menginisialisasi WebDriver: {e}")
             raise
+
+    def _can_post_now(self):
+        """Selalu return True karena tidak ada rate limiting untuk posts."""
+        return True
+
+    def _record_post(self):
+        """Tidak perlu record post karena tidak ada rate limiting."""
+        pass
 
     def login(self):
         try:
@@ -65,8 +98,8 @@ class TwitterScraper:
             logging.error(f"Terjadi error saat login: {e}")
             return False
 
-    def get_second_tweet_info(self):
-        """Mengambil info dari TWEET KEDUA di halaman profil."""
+    def get_latest_tweets(self):
+        """Ambil 5 tweet ID terbaru dari profil."""
         try:
             logging.info(f"Mengunjungi profil: {self.config['TARGET_PROFILE_URL']}")
             self.driver.get(self.config['TARGET_PROFILE_URL'])
@@ -76,31 +109,93 @@ class TwitterScraper:
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, tweet_selector))
             )
             
-            # Asumsi: Selalu ada pinned post, jadi tweet terbaru adalah di posisi kedua.
-            if len(all_tweets) < 2:
-                logging.warning("Tidak ditemukan cukup tweet (kurang dari 2). Tidak ada yang diproses.")
-                return None
-
-            second_tweet_element = all_tweets[1] # Langsung ambil tweet kedua
+            logging.info(f"Ditemukan {len(all_tweets)} tweet di halaman profil")
             
-            try:
-                tweet_text = second_tweet_element.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]').text
-            except NoSuchElementException:
-                logging.warning("Tidak dapat menemukan elemen teks pada tweet kedua.")
-                tweet_text = ""
-
-            image_url = self._find_image_url(second_tweet_element)
-
-            return {
-                "text": tweet_text,
-                "image": image_url
-            }
+            # Ambil maksimal 5 tweet terbaru
+            tweet_batch = all_tweets[:5]
+            current_tweet_ids = []
+            
+            for i, tweet_element in enumerate(tweet_batch):
+                try:
+                    tweet_id = self._extract_tweet_id(tweet_element)
+                    if tweet_id:
+                        current_tweet_ids.append(tweet_id)
+                        logging.info(f"Tweet {i+1}: ID {tweet_id}")
+                except Exception as e:
+                    logging.error(f"Error mengambil tweet ke-{i+1}: {e}")
+                    continue
+            
+            logging.info(f"Berhasil mengambil {len(current_tweet_ids)} tweet ID")
+            return current_tweet_ids
 
         except TimeoutException:
-            logging.error("Timeout saat menunggu tweet dimuat. Profil mungkin kosong atau halaman tidak ter-load.")
-            return None
+            logging.error("Timeout saat menunggu tweet dimuat.")
+            return []
         except Exception as e:
-            logging.error(f"Gagal mengambil tweet kedua: {e}", exc_info=True)
+            logging.error(f"Gagal mengambil tweet: {e}")
+            return []
+
+    def _extract_tweet_id(self, tweet_element):
+        """Ekstrak ID tweet dari elemen tweet."""
+        try:
+            # Metode 1: Cari link tweet
+            time_element = tweet_element.find_element(By.CSS_SELECTOR, 'time')
+            parent_link = time_element.find_element(By.XPATH, '..')
+            href = parent_link.get_attribute('href')
+            
+            if href and '/status/' in href:
+                tweet_id = href.split('/status/')[-1].split('?')[0]
+                return tweet_id
+                
+        except NoSuchElementException:
+            pass
+        
+        try:
+            # Metode 2: Cari dari data attributes
+            tweet_id = tweet_element.get_attribute('data-tweet-id')
+            if tweet_id:
+                return tweet_id
+        except:
+            pass
+        
+        try:
+            # Metode 3: Cari dari aria-labelledby atau id
+            aria_labelledby = tweet_element.get_attribute('aria-labelledby')
+            if aria_labelledby and 'id__' in aria_labelledby:
+                return aria_labelledby.split('id__')[-1]
+        except:
+            pass
+        
+        return None
+
+    def _extract_tweet_info(self, tweet_element, tweet_id):
+        """Ekstrak informasi lengkap dari elemen tweet."""
+        try:
+            # Ekstrak teks tweet
+            try:
+                tweet_text = tweet_element.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]').text
+            except NoSuchElementException:
+                tweet_text = ""
+            
+            # Ekstrak URL gambar
+            image_url = self._find_image_url(tweet_element)
+            
+            # Ekstrak timestamp
+            try:
+                time_element = tweet_element.find_element(By.CSS_SELECTOR, 'time')
+                timestamp = time_element.get_attribute('datetime')
+            except NoSuchElementException:
+                timestamp = datetime.datetime.now().isoformat()
+            
+            return {
+                "id": tweet_id,
+                "text": tweet_text,
+                "image": image_url,
+                "timestamp": timestamp
+            }
+            
+        except Exception as e:
+            logging.error(f"Error extracting tweet info for ID {tweet_id}: {e}")
             return None
 
     def _find_image_url(self, tweet_element):
@@ -114,66 +209,198 @@ class TwitterScraper:
         except Exception:
             return None
 
-    def _send_to_whatsapp(self, message, image_url):
-        payload = {'groupId': self.config['GROUP_ID'], 'message': message, 'imageUrl': image_url}
+    def _send_to_whatsapp(self, tweet_info):
+        """Kirim tweet ke WhatsApp tanpa rate limiting."""
+        payload = {
+            'groupId': self.config['GROUP_ID'],
+            'message': tweet_info['text'],
+            'imageUrl': tweet_info['image']
+        }
+        
         try:
-            requests.post(self.config['WHATSAPP_BOT_URL'], json=payload, timeout=10)
-            logging.info("Data telah dikirim ke bot WhatsApp.")
+            response = requests.post(self.config['WHATSAPP_BOT_URL'], json=payload, timeout=10)
+            if response.status_code == 200:
+                logging.info(f"Tweet ID {tweet_info['id']} berhasil dikirim ke WhatsApp")
+                return True
+            else:
+                logging.error(f"Failed to send tweet ID {tweet_info['id']}: HTTP {response.status_code}")
+                return False
         except requests.exceptions.RequestException as e:
-            logging.error(f"Gagal mengirim data ke bot WhatsApp: {e}")
+            logging.error(f"Gagal mengirim tweet ID {tweet_info['id']} ke WhatsApp: {e}")
+            return False
+
+    def _get_tweet_details(self, tweet_id):
+        """Ambil detail tweet berdasarkan ID."""
+        try:
+            # Cari tweet element berdasarkan ID
+            tweet_selector = 'article[data-testid="tweet"]'
+            tweets = self.driver.find_elements(By.CSS_SELECTOR, tweet_selector)
+            
+            for tweet_element in tweets:
+                element_id = self._extract_tweet_id(tweet_element)
+                if element_id == tweet_id:
+                    # Ekstrak teks tweet
+                    try:
+                        tweet_text = tweet_element.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]').text
+                    except NoSuchElementException:
+                        tweet_text = ""
+                    
+                    # Ekstrak URL gambar
+                    image_url = self._find_image_url(tweet_element)
+                    
+                    return {
+                        "id": tweet_id,
+                        "text": tweet_text,
+                        "image": image_url,
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
+            
+            # Jika tidak ditemukan, buat data minimal
+            return {
+                "id": tweet_id,
+                "text": f"Tweet baru dari {self.config['TARGET_PROFILE_URL']}",
+                "image": None,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logging.error(f"Error getting tweet details for ID {tweet_id}: {e}")
+            return None
+
+    def check_and_process_new_tweets(self, current_tweet_ids):
+        """Cek tweet baru dan proses jika ada."""
+        new_tweet_ids = []
+        
+        # Cari tweet yang belum diproses
+        for tweet_id in current_tweet_ids:
+            if tweet_id not in self.processed_tweet_ids:
+                new_tweet_ids.append(tweet_id)
+        
+        if not new_tweet_ids:
+            logging.info("Tidak ada tweet baru")
+            return 0
+        
+        logging.info(f"Ditemukan {len(new_tweet_ids)} tweet baru: {new_tweet_ids}")
+        
+        # Proses setiap tweet baru
+        processed_count = 0
+        for tweet_id in new_tweet_ids:
+            try:
+                # Ambil detail tweet
+                tweet_info = self._get_tweet_details(tweet_id)
+                if tweet_info and self._send_to_whatsapp(tweet_info):
+                    self.processed_tweet_ids.add(tweet_id)
+                    processed_count += 1
+                    logging.info(f"✅ Tweet {tweet_id} berhasil dikirim ke WhatsApp")
+                    time.sleep(1)  # Delay 1 detik antar tweet
+                else:
+                    logging.error(f"❌ Gagal mengirim tweet {tweet_id}")
+            except Exception as e:
+                logging.error(f"Error processing tweet {tweet_id}: {e}")
+        
+        if processed_count > 0:
+            self._save_processed_tweets()
+        
+        return processed_count
 
     def run(self):
-        """Menjalankan loop utama scraper."""
+        """Loop utama scraper - sederhana dan efektif."""
         if self.login():
             while True:
+                try:
+                    # Cek waktu offline
+                    jakarta_tz = pytz.timezone('Asia/Jakarta')
+                    now_jakarta = datetime.datetime.now(jakarta_tz)
+                    
+                    if self.config['OFFLINE_START_HOUR'] <= now_jakarta.hour < self.config['OFFLINE_END_HOUR']:
+                        logging.info(f"Mode offline ({now_jakarta.strftime('%H:%M')} WIB)")
+                        time.sleep(self.config['OFFLINE_CHECK_INTERVAL'] * 60)
+                        continue
+                    
+                    # Ambil 5 tweet ID terbaru
+                    current_tweet_ids = self.get_latest_tweets()
+                    
+                    if current_tweet_ids:
+                        # Cek dan proses tweet baru
+                        processed_count = self.check_and_process_new_tweets(current_tweet_ids)
+                        
+                        if processed_count > 0:
+                            logging.info(f"✅ {processed_count} tweet baru berhasil diproses")
+                    
+                    # Random delay 60-65 detik
+                    wait_time = random.randint(60, 65)
+                    logging.info(f"Menunggu {wait_time} detik...")
+                    time.sleep(wait_time)
+                    
+                except Exception as e:
+                    logging.error(f"Error: {e}")
+                    time.sleep(60)
 
-                # Tentukan zona waktu Jakarta
-                jakarta_tz = pytz.timezone('Asia/Jakarta')
-                now_jakarta = datetime.datetime.now(jakarta_tz)
-                
-                
-                # Cek apakah jam saat ini antara 00:00 (inklusif) dan 06:00 (eksklusif)
-                if 0 <= now_jakarta.hour < 6:
-                    offline_sleep_minutes = 30
-                    logging.info(
-                        f"Jam {now_jakarta.strftime('%H:%M:%S')} WIB. "
-                        f"Bot dalam mode offline. Akan dicek lagi dalam {offline_sleep_minutes} menit."
-                    )
-                    time.sleep(offline_sleep_minutes * 60)
-                    continue  # Kembali ke awal loop untuk cek waktu lagi
-                
-                
-                logging.info("Mencari tweet terbaru (di posisi kedua)...")
-                tweet_info = self.get_second_tweet_info()
+    def get_stats(self):
+        """Mendapatkan statistik scraper."""
+        return {
+            'processed_tweets': len(self.processed_tweet_ids),
+            'max_tweets_check': self.config['MAX_TWEETS_CHECK'],
+            'check_interval': "60-65 detik (random)"
+        }
 
-                if tweet_info and tweet_info["text"] != self.last_tweet_text:
-                    logging.info(f">>> Tweet baru ditemukan! Teks: {tweet_info['text'][:70]}...")
-                    self.last_tweet_text = tweet_info["text"] # Update dengan teks baru
-                    self._send_to_whatsapp(tweet_info["text"], tweet_info["image"])
-                else:
-                    logging.info("Tidak ada tweet baru.")
-                
-                min_wait = self.config['MIN_WAIT_SECONDS']
-                max_wait = self.config['MAX_WAIT_SECONDS']
-                
-                random_wait = random.randint(min_wait, max_wait)
-                
-                logging.info(f"Menunggu selama {random_wait} detik...")
-                time.sleep(random_wait)
+    def cleanup_old_tweet_ids(self, max_ids=None):
+        """Membersihkan ID tweet lama untuk menghemat memori."""
+        if max_ids is None:
+            max_ids = self.config['MAX_STORED_TWEET_IDS']
+            
+        if len(self.processed_tweet_ids) > max_ids:
+            # Konversi ke list, sort, dan ambil yang terbaru
+            sorted_ids = sorted(list(self.processed_tweet_ids))
+            self.processed_tweet_ids = set(sorted_ids[-max_ids:])
+            self._save_processed_tweets()
+            logging.info(f"Cleaned up old tweet IDs, keeping {max_ids} most recent")
 
     def close(self):
-        """Menutup WebDriver."""
-        if self.driver:
-            self.driver.quit()
-            logging.info("WebDriver ditutup.")
+        """Menutup WebDriver dan simpan data."""
+        try:
+            # Simpan data terakhir sebelum menutup
+            self._save_processed_tweets()
+            
+            if self.driver:
+                self.driver.quit()
+                logging.info("WebDriver ditutup.")
+                
+            # Tampilkan statistik akhir
+            stats = self.get_stats()
+            logging.info(f"Statistik akhir: {stats['processed_tweets']} tweet diproses")
+            
+        except Exception as e:
+            logging.error(f"Error saat menutup scraper: {e}")
 
 if __name__ == "__main__":
     scraper = None
     try:
+        # Load dan validasi konfigurasi
+        CONFIG = get_config()
+        
+        logging.info("🚀 Memulai Twitter Scraper dengan batch processing dan rate limiting...")
+        
+        # Tampilkan ringkasan konfigurasi
+        print_config_summary(CONFIG)
+        
         scraper = TwitterScraper(CONFIG)
+        
+        # Cleanup tweet IDs lama setiap startup
+        scraper.cleanup_old_tweet_ids()
+        
+        # Tampilkan statistik awal
+        stats = scraper.get_stats()
+        logging.info(f"Statistik awal: {stats['processed_tweets']} tweet sudah diproses sebelumnya")
+        
         scraper.run()
+        
+    except KeyboardInterrupt:
+        logging.info("⏹️ Scraper dihentikan oleh user")
     except Exception as e:
-        logging.critical(f"Terjadi error kritis pada scraper: {e}")
+        logging.critical(f"Terjadi error kritis pada scraper: {e}", exc_info=True)
     finally:
         if scraper:
+            logging.info("🔄 Menutup scraper...")
             scraper.close()
+        logging.info("✅ Scraper telah ditutup")
