@@ -11,27 +11,27 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Twitter credentials
     "TWITTER_USERNAME": "@rey_misteria",
     "TWITTER_PASSWORD": "Shinkasen123.",
-    "TARGET_PROFILE_URL": "https://x.com/wijay820",
+    "TARGET_PROFILE_URL": "https://x.com/GenshinImpactID",
     
     # Timing configuration
     "CHECK_INTERVAL_SECONDS": 60,
     "MIN_WAIT_SECONDS": 60,  # 60 detik
-    "MAX_WAIT_SECONDS": 61,  # 61 detik
+    "MAX_WAIT_SECONDS": 300,  # 61 detik
     "SELENIUM_TIMEOUT": 20,
     
     # WhatsApp Bot configuration
-    "WHATSAPP_BOT_URL": "http://localhost:3000/kirim-pesan",
+    "WHATSAPP_BOT_URL": "http://104.43.57.44:3000/kirim-pesan",
     "GROUP_ID": "120363417848982331@g.us",
     
     # Simple configuration
     "MAX_TWEETS_CHECK": 5,  # Selalu ambil 5 tweet terbaru
     
     # Data storage
-    "TWEET_DATA_FILE": "tweet_data.json",
+    "TWEET_DATA_FILE": "scrapper/tweet_data.json",
     "LOG_LEVEL": "INFO",
     
     # Smart Scheduler configuration
-    "USE_SMART_SCHEDULER": False,  # Gunakan smart scheduler
+    "USE_SMART_SCHEDULER": True,  # Gunakan smart scheduler
     "SCHEDULER_CHECK_INTERVAL": 60,  # Interval cek scheduler (detik)
     "TIMEZONE": "Asia/Jakarta",  # Timezone untuk scheduler
     
@@ -46,26 +46,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 def load_config_from_env() -> Dict[str, Any]:
     """
-    Load konfigurasi dengan prioritas config.py file
-    Environment variables hanya digunakan untuk credentials yang sensitif
+    Load konfigurasi dengan PRIORITAS MUTLAK config.py file
+    Environment variables DIABAIKAN - config.py adalah sumber kebenaran tunggal
     """
     config = DEFAULT_CONFIG.copy()
     
-    # HANYA credentials yang bisa di-override oleh environment variables
-    # Ini untuk keamanan deployment
-    if os.getenv('TWITTER_USERNAME'):
-        config['TWITTER_USERNAME'] = os.getenv('TWITTER_USERNAME')
-    if os.getenv('TWITTER_PASSWORD'):
-        config['TWITTER_PASSWORD'] = os.getenv('TWITTER_PASSWORD')
-    if os.getenv('TARGET_PROFILE_URL'):
-        config['TARGET_PROFILE_URL'] = os.getenv('TARGET_PROFILE_URL')
-    if os.getenv('WHATSAPP_BOT_URL'):
-        config['WHATSAPP_BOT_URL'] = os.getenv('WHATSAPP_BOT_URL')
-    if os.getenv('GROUP_ID'):
-        config['GROUP_ID'] = os.getenv('GROUP_ID')
-    
-    # SEMUA konfigurasi timing dan behavior SELALU menggunakan nilai dari config.py
-    # Environment variables untuk timing akan diabaikan secara otomatis
     
     return config
 

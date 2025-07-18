@@ -44,7 +44,9 @@ def main():
     
     # Start scraper directly
     try:
-        subprocess.run([sys.executable, "selenium-scrapper.py"], check=True)
+        import os
+        scraper_path = os.path.join(os.path.dirname(__file__), "selenium-scrapper.py")
+        subprocess.run([sys.executable, scraper_path], check=True)
     except KeyboardInterrupt:
         print("\n⏹️ Scraper stopped by user")
     except subprocess.CalledProcessError as e:
