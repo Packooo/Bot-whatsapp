@@ -24,12 +24,13 @@ from scheduler import SmartScheduler
 
 class TwitterScraper:
     def __init__(self, config):
+        base_dir = os.path.dirname(__file__)
         self.config = config
         self.driver = self._setup_driver()
         self.last_tweet_text = "" # <-- Kembali menyimpan teks
         self.processed_tweet_ids = set()  # Set untuk menyimpan ID tweet yang sudah diproses
         self.post_timestamps = deque()  # Queue untuk tracking timestamp posting
-        self.tweet_data_file = self.config["TWEET_DATA_FILE"]
+        self.tweet_data_file = os.path.join(base_dir, self.config["TWEET_DATA_FILE"])
         
         # Initialize smart scheduler jika diaktifkan
         use_smart_scheduler = self.config.get('USE_SMART_SCHEDULER', False)
